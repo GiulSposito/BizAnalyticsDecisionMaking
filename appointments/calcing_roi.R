@@ -48,6 +48,7 @@ app_pred %>%
   print() %>% 
   summary()
 
+# AUC
 app_pred %>% 
   roc_auc(.pred_Arrived, truth=status)
 
@@ -79,6 +80,19 @@ genConfMatrix <- function(.threshold=.5, .predData,  beneft=60, cost=5, rev_rate
     return()
 }
 
+getTPFP <- function(cm){
+  tibble(
+    TP = cm$table["Cancelled","Cancelled"],
+    FP = cm$table["Cancelled","Arrived"],
+    P  = sum(cm$table["Cancelled",])
+  ) %>% 
+    mutate(
+      TP_rate = TP/P,
+      FP_rate = FP/P
+    ) %>% 
+    return()
+}
+
 genConfMatrix(1, app_pred)
 
 thresholds <- seq(0,.8,.01)
@@ -88,7 +102,7 @@ rois <- thresholds %>%
 tibble(threshold = thresholds,
        roi = rois) %>% 
   ggplot(aes(x=threshold, y=roi)) +
-    geom_point(size=2) +
+    # geom_point(size=2) +
     geom_line() +
     geom_hline(yintercept = 0, linetype="dashed", color="red") +
     geom_vline(xintercept = 0.5, linetype="dashed", color="darkgrey") +
@@ -104,6 +118,7 @@ cm %>%
 # cenarios de investimentos
 tibble(threshold = seq(0,1,.01)) %>% 
   mutate( cm = map(threshold, genConfMatrix, .predData=app_pred),
+          predTrue = map(cm, getTPFP),
           metrics = map(cm, function(.x){
             .x %>% 
               summary() %>% 
@@ -111,8 +126,8 @@ tibble(threshold = seq(0,1,.01)) %>%
               pivot_wider(names_from = .metric, values_from = .estimate) %>% 
               return()
           })) %>% 
-  unnest(metrics) %>% 
-  select(threshold, accuracy, sens, spec, precision, recall) %>%
+  unnest(metrics,predTrue) %>% View()
+  select(threshold, accuracy, sens, spec, precision, recall, TP_rate, FP_rate) %>%
   pivot_longer(cols = -threshold, names_to = "metric", values_to = "value") %>% 
   ggplot(aes(x=threshold, y=value, color=metric))+
   geom_line() +
