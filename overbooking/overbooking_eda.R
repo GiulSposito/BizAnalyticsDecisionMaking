@@ -170,7 +170,7 @@ simulateDemandShowUpModel <- function(overbook, n, capacity, showup_model) {
 }
 
 # simulating one case ####
-sim <- simulateDemand(15,10000,150,rate_model)
+sim <- simulateDemandShowUpModel(15,10000,150,rate_model)
 
 # what we got
 sim
@@ -197,7 +197,7 @@ bumped_more_2 <- sim %>%
 # looking the behavior of the probability to get 2 (or 5) less passengers bumped
 # in the new model
 tibble(overbook=1:20) %>% 
-  mutate( simulation = map(overbook, simulateDemand, n=10000, capacity=150, showup_model= rate_model)) %>% 
+  mutate( simulation = map(overbook, simulateDemandShowUpModel, n=10000, capacity=150, showup_model= rate_model)) %>% 
   mutate( prob2BumpPass = map_dbl(simulation, probBumpedPass, nPass=2),
           prob5BumpPass = map_dbl(simulation, probBumpedPass, nPass=5)) %>% 
   pivot_longer(cols=c(-overbook, -simulation), names_to = "bumped", values_to = "prob") %>% 
@@ -211,28 +211,35 @@ tibble(overbook=1:20) %>%
 # probability of 95% to get 2 or less bumped pass: 8 over capacity seats
 # probability of 95% to get 5 or less bumped pass: 12 over capacity seats
 
-
-
-simulation <- sim
-nPass <- 2
-
-  
-overDist <- ecdf(sim$overbooked)
-
-1:12 %>% 
-  map_dbl(overDist)
-de
-
-
-# economic view
+# economic view ####
 ticket_prc <- 314
 transf_fee <- 60
 bumped_cost <- 400
 
-demand_sim %>% 
+demand_sim <- simulateDemandShowUpModel(15, n=10000, capacity=150, showup_model= rate_model)
+
+finance_sim <- demand_sim %>% 
   mutate(
     revenue       = booked * ticket_prc,
     noshow_cost   = no_shows * transf_fee,
     overbook_cost = overbooked * bumped_cost,
     profit        = revenue - (noshow_cost+overbook_cost)
   )
+
+plotdist(finance_sim$profit)
+
+calcFinanceResults <- function(simulation, ticket_prc=314, transf_fee=60, bumped_cost=400){
+  simulation %>% 
+    mutate(
+      revenue       = booked * ticket_prc,
+      noshow_cost   = no_shows * transf_fee,
+      overbook_cost = overbooked * bumped_cost,
+      profit        = revenue - (noshow_cost+overbook_cost)
+    ) %>% 
+    return()
+}
+
+tibble(overbook=1:20) %>% 
+  mutate( simulation = map(overbook, simulateDemandShowUpModel, n=10000, capacity=150, showup_model= rate_model)) %>% 
+  mutate( simulation = map(simulation, calcFinanceResults))
+  
