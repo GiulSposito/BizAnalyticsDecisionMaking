@@ -79,7 +79,7 @@ simulation %>%
   })) %>% View()
   
 simulation %>% 
-  filter(overbook_lim==0) %>% View()
+  filter(overbook_lim==15) %>% 
   pull(bumped) %>% 
   hist()
 
