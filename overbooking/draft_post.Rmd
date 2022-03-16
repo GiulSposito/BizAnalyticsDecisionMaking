@@ -1,60 +1,131 @@
+---
+title: "Post Overbooking: Usando Monte Carlo para efinir estratégia de Overbooking em voos"
+author: "Giuliano Sposito"
+date: "3/15/2022"
+output: 
+  html_document:
+    df_print: paged
+    keep_md: yes
+---
+
+Nem todos os passageiros que compraram uma passagem de avião parecem no embarque, embora o ticket já tenha sido vendido os "no shows" fazem os voôs ocorrerem com capacidade ociosa, incorrendo num custo de oportunidade para a operadora bem como desperdícios de recursos. Uma estratégia para tentar ocupar a capacidade ociosa é fazer overbook, colocar à venda mais passagens do que o avião comporta, tentando assim compensar os "no shows" e ocupar os acentos vazios. O risco que se corre é no momento do embarque ter mais passageiros do que o avião comporta, levando a custos maiores para manejar os passageiros em outros voôs além do desgaste da marca e satisfação dos usuários. Neste post vamos analisar a distribuição da demanda e o comportamento dos "no shows" a fim de encontrar a melhor estratégia de overbooking a fim de maximizar o retorno e minimizar e simular usando monte carlo os impactos de remanejamento de passageiros em excesso.
+
+## Abordagem
+
+A abordagem que usaremos para tentar encontrar a melhor estratégia de overbooking seguirá os seguintes passos:
+
+1. Entender o comportamento (distribuição) da demanda
+1. Com base na distribuição da demanda, simular usando Monte Carlo 10 mil vôos
+1. Definir o critério que gostaríamos de atender e então encontrar a melhor estratégia de overbooking
+
+## Os Dados e a Demanda
+
+Como ponto de partida vamos carregar os dados de demanda e comparecimento de um determinado voô comercial, disponível [nesta planilha de excel]() e fazer uma breve exploração dos dados e tentar entender o comportamento da demanda para que ela possa ser simulada.
+
+```{r setup, message=FALSE, warning=FALSE}
+
 # setup ####
 library(tidyverse)
-library(fit)
-library(fitdistrplus)
-
 
 # read data ####
-raw_data <- readxl::read_xlsx("./overbooking/Flight-Overbooking-Data.xlsx")
+raw_data <- readxl::read_xlsx("./Flight-Overbooking-Data.xlsx")
 
 # simple clean up
 flight_dt <- raw_data %>% 
   dplyr::select(1:5) %>% 
   janitor::clean_names()
 
-# EDA ####
+# glimpse
+flight_dt %>% 
+  head(10) %>% 
+  knitr::kable()
 
+```
+
+É um dataset bem direto e simples, com as colunas de demanda, quantos passageiros foram registrados, quantos apareceram e qual a taxa de presença (apareceram/registrados).  
+
+### Data Overview
+
+```{r eda}
 # overview
 flight_dt %>% 
   skimr::skim()
+```
+
+Como vc pode ver, há um limite superior de 150 na coluna de registrados, indicando que essa é a capacidade do vôo, ou seja, 150 acentos.
+
+### Demand Distribuition
+
+Vamos tentar modelar a demanda, fazendo o fit da sua distribuição, para tal usaremos o pacote `{fitdistrplus}`
+
+```{r demandDistr, message=FALSE, warning=FALSE}
+library(fitdistrplus)
 
 # checking the empirical distribution
 plotdist(flight_dt$demand, discrete = T)
 
 # what are the distribution candidates?
 descdist(flight_dt$demand, boot=1000, discrete = T)
+```
+O pacote `{fitdistrplus}` indicou três candidatos como melhor fit para a distribuição da demanda: [normal](https://pt.wikipedia.org/wiki/Distribui%C3%A7%C3%A3o_normal), [poisson](https://pt.wikipedia.org/wiki/Distribui%C3%A7%C3%A3o_de_Poisson) ou [negative binomial](https://pt.wikipedia.org/wiki/Distribui%C3%A7%C3%A3o_binomial_negativa). Vamos testar quais das duas mais comuns tem o melhor fit.
 
-# all then is possible, lets fit a poisson and a normal
+#### Normal
+
+```{r fitNorm}
+# lets fit a normal and see what we get
+fitdist(flight_dt$demand, "norm", discrete = T) %T>%
+  plot() %>% 
+  summary()
+```
+
+#### Poisson
+
+```{r fitPois}
+# lets fit a poisson and see what we get
 fitdist(flight_dt$demand, "pois", discrete = T) %T>%
   plot() %>% 
   summary()
+```
 
-fitdist(flight_dt$demand, "norm", discrete = T) %>%
-  plot() %>% 
-  summary()
+#### Best Fit
 
-# Emp CDF of the Poisson is a little better ans IAC also is marginally better
+Observamos que a distribuição de Poisson tem, marginalmente, p melhor fit observando os indicadores [loglikehood](
+Likelihood vs. Probability: What's the Difference? - Statologyhttps://www.statology.org › likelihood-vs-probability), [IAC](https://pt.wikipedia.org/wiki/Crit%C3%A9rio_de_informa%C3%A7%C3%A3o_de_Akaike) e [BIC](https://en.wikipedia.org/wiki/Bayesian_information_criterion). Vamos então usar poisson como nosso modelo de distribuição para a demanda.
+
+```{r demandModel}
+# Emp CDF fit for Poisson is a little better and IAC also is marginally better
 demand.pois <- fitdist(flight_dt$demand, "pois", discrete = T)
+```
 
-# Rate EDA
-# flight_dt %>% 
-#   ggplot(aes(x=rate, y=demand)) +
-#   geom_point() +
-#   theme_light()
-# 
-# plotdist(flight_dt$rate, discrete = T)
+### Show Up
 
-# Modeling ####
+O show up pode ser modelado como um sorteio binomial em cima do número de passageiros registrados para o vôo com uma taxa de sucesso determinado pela média histórica.
 
-n <- 10000 # simulations
-overbook <- 15
-capacity <- 150
-showup_rate <- mean(flight_dt$rate)
+```{r showuprate}
+mean(flight_dt$rate)
+```
 
+Constatamos que a taxa média histórica de presença para o vôo é de `r round(100*mean(flight_dt$rate))`%, podemos usar essa informação para simular o processo de presença fazendo:
+
+```{r showupsample}
+
+pass_reg <- 145 # number of passengers registered for the fligth
+show_ups <- rbinom(1, pass_reg, mean(flight_dt$rate)) # one random binomial draw with size of pass_reg at historic show_up rate
+show_ups 
+
+```
+
+
+## Modeling
+
+Vamos fazer um modelo para simular n vezes uma situação de voo, neste primeiro modelo vamos estabelecer um número fixo para o overbooking de 15 posições, isto é, 
+
+```{r simpleModel}
 # demand simulation
-simulateDemand <- function(overbook, n, capacity, showup_rate) {
-  tibble(demand = rpois(n, demand.pois$estimate)) %>% 
-    # booked: demand inside capacity (flight seets) 
+simulateDemand <- function(overbook, n, capacity, showup_rate, demand_model) {
+  # generate the demand scenarios (pois distributed)
+  tibble(demand = rpois(n, demand_model$estimate)) %>% 
+    # booked: demand inside capacity+overbook (flight seats) 
     mutate( booked = map_dbl(demand, ~min( .x, overbook+capacity ) )) %>% 
     # show-ups and no shows
     mutate( shows    = map_dbl(booked, ~rbinom(1,.x,showup_rate)),
@@ -70,18 +141,33 @@ simulateDemand <- function(overbook, n, capacity, showup_rate) {
     return()  
 }
 
-# simulating one case ####
-sim <- simulateDemand(15,10000,150,mean(flight_dt$rate))
+# simulating 10 thousand cases using:
+# fligth capacity: 150 passengers
+# overbooking:      15 positions
+# show_up rate:   ~92% historic based
+# poisson distribuion: fitted previously
+sim <- simulateDemand(15,10000,150,mean(flight_dt$rate),demand.pois)
 
 # what we got
-sim
+sim %>% 
+  head(10) %>% 
+  knitr::kable()
+```
 
+Com as situações de embarque simuladas, podemos fazer a análise do comportamento do overbooking real (ou seja) quantos passageiros, acima da capacidade real do avião (150 acentos) de fato aparecerram no portão de embarque e que precisariam ser remanejados:
+
+```{r bumped}
 # lets visualize the overbooked passengers distribution
 sim %>% 
   count(overbooked)
 
 plotdist(sim$overbooked)
+```
+### Overbooking Criteria
 
+Com a visão de como se comporta o overbooking real (# de passageiros remanejados) numa estratégia de 15 acentos podemos estabelecer uma política (ou estratégia) de overbooking, por exemplo, estabelecer que em 95% das situações o número de passageiros remanejados não ultrapasse 2. Então neste cenário teríamos
+
+```{r bumped2in15}
 # chance to have 2 or less bumped pass
 bumped_more_2 <- sim %>% 
   count(overbooked) %>% 
@@ -90,8 +176,15 @@ bumped_more_2 <- sim %>%
   unlist()
 
 1-(bumped_more_2/10000)
+```
 
-# simulation ####
+Neste cenário de 15 acentos adicionais para este voo, com esse perfil de demanda e comportamento de comparecimento não seria possível atender o critério de ter até dois passageiros remanejados em 95% das vezes.
+
+## Cenario simultaions
+
+Vamos então analizar qual seria o número de posicionais adicionais a serem oferecidas que possibilite a empresa ficar dentro da política de overbooking definida acima.
+
+```{r simulation}
 
 # lets find the optimal overbook to get max of 2 bumped passengers in 95% of situations
 
@@ -108,18 +201,30 @@ probBumpedPass <- function(simulation, nPass){
 
 # looking the behavior of the probability to get 2 (or 5) less passengers bumped
 tibble(overbook=1:20) %>% 
-  mutate( simulation = map(overbook, simulateDemand, n=10000, capacity=150, showup_rate=mean(flight_dt$rate))) %>% 
+  mutate( simulation = map(overbook, simulateDemand, n=10000, 
+                           capacity=150, showup_rate=mean(flight_dt$rate), 
+                           demand_model=demand.pois)) %>% 
   mutate( prob2BumpPass = map_dbl(simulation, probBumpedPass, nPass=2),
           prob5BumpPass = map_dbl(simulation, probBumpedPass, nPass=5)) %>% 
   pivot_longer(cols=c(-overbook, -simulation), names_to = "bumped", values_to = "prob") %>% 
   ggplot(aes(x=overbook, y=prob, color=bumped)) +
   geom_hline(yintercept=0.95, linetype="dashed") + 
+  geom_vline(xintercept=13, linetype="dashed", color="pink") +
+  geom_vline(xintercept=18, linetype="dashed", color="lightblue") +
   geom_line() +
   geom_point() +
+  labs(title="Bumped Passengers", 
+       subtitle = "Chance to bump until 2 passengers (red) or 5 passengers (blue)",
+       y="probability", x="seats offered beyond flight capacity") +
   theme_light()
   
 # we can see that offering 13 additional seats (over plain capacity) we have less than 5% of chance to bumped more than 2 passengers
 # Offering 18 additional seats (over plain capacity) we have less than 5% of chance to bump more than 5 passengers
+
+
+```
+
+
 
 # dependence ####
 
@@ -303,3 +408,6 @@ sim_Finance %>%
   theme_light()
 
 
+## Análise Temporal
+
+Este exercício não fez uma análise temporal, estratégias de overbooking podem ser customizadas para atender melhor a variação sazional da demanda melhorando os resultados obtidos, este exercício ficará para uma próxima ocasião.
