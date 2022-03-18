@@ -224,15 +224,18 @@ tibble(overbook=1:20) %>%
 
 ```
 
+## Dependência entre demanda e show-up rate
 
+Nós tinhamos assumido uma taxa constante de show-up, não importa a demanda do vôo o comparecimento para embarque segue uma taxa constante, mas podemos comprovar essa hipótese
 
-# dependence ####
-
+```{r corrDemandShowup}
 # we assume that the showup rate is fixed, is it?
 cor.test(flight_dt$demand, flight_dt$rate)
+```
 
-# no it isn't, so we have to modeling this dependence
+Esta é uma taxa de correlação muita alta para ser ignorada, vamos refazer o modelo considerando essa dependência.
 
+```{r showUpModel}
 # lets make a simple linear model
 rate_model <- lm(rate ~ demand, data = flight_dt)
 
@@ -241,7 +244,10 @@ summary(rate_model)
 par(mfrow=c(2,2))
 plot(rate_model)
 par(mfrow=c(1,1))
+```
+Vamos considerar um simples modelo linear entre a demanda e o show-up rate e vamos incorporar esse modelo dentro da nossa simulação
 
+```{r simModelShowUpDependency}
 # another simulation model considering the dependency between showup rate and demand
 simulateDemandShowUpModel <- function(overbook, n, capacity, showup_model) {
   # generate a demand simulation
@@ -275,23 +281,29 @@ sim
 
 # lets visualize the overbooked passengers distribution
 sim %>% 
+  head(10) %>%  
   count(overbooked)
 
 plotdist(sim$overbooked)
+```
 
+Podemos observar que a distribuição (para esse caso de 15 acentos adicionais) se espalha um pouco, agora há mais chances de remanejamento por ovebooking, aparentemente.
+
+
+```{r bumped95dependency}
 # chance to have 2 or less bumped pass
-bumped_more_2 <- sim %>% 
+bumped_more_2_dep <- sim %>% 
   count(overbooked) %>% 
   filter(overbooked>2) %>% 
   summarise( total = sum(n) ) %>% 
   unlist()
 
-1-(bumped_more_2/10000)
 
-# we got a significatily different distribuition
-# the bumped passengers are more flat
+```
 
+E comprovadamente, apenas `r round(100*(1-(bumped_more_2_dep/10000)))`% de ter dois ou menos passageiros remanejados neste cenário, comparado à `r round(100*(1-(bumped_more_2/10000)))`% do cenário anterior. Vamos refazer a simulação considerando várias estratégias para o overbooking, como fizemos no modelo anterior.
 
+```{r simNewModel}
 # looking the behavior of the probability to get 2 (or 5) less passengers bumped
 # in the new model
 tibble(overbook=1:20) %>% 
@@ -301,9 +313,16 @@ tibble(overbook=1:20) %>%
   pivot_longer(cols=c(-overbook, -simulation), names_to = "bumped", values_to = "prob") %>% 
   ggplot(aes(x=overbook, y=prob, color=bumped)) +
   geom_hline(yintercept=0.95, linetype="dashed") + 
+  geom_vline(xintercept=8, linetype="dashed", color="pink") +
+  geom_vline(xintercept=12, linetype="dashed", color="lightblue") +
   geom_line() +
   geom_point() +
+  labs(title="Bumped Passengers (show-up rate dependent)", 
+     subtitle = "Chance to bump until 2 passengers (red) or 5 passengers (blue)",
+     y="probability", x="seats offered beyond flight capacity") +
   theme_light()
+```
+Obtemos resultados significativamente diferentes quando consideramos que a taxa de show-up é dependente da demanda, de maneira que precisamos oferecer bem menos acentos adicionais a fim da manter uma eventual política de 95% dos voôs com 2 ou menos passageiros remanejados.
 
 # now we got different results
 # probability of 95% to get 2 or less bumped pass: 8 over capacity seats
